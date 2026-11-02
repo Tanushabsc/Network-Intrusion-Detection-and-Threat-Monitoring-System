@@ -1,28 +1,42 @@
 
+import os
 import joblib
 import pandas as pd
+import requests
 
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-# Project paths
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "models" / "intrusion_model.joblib"
 
-# Load trained model
+MODEL_URL = os.getenv(
+    "MODEL_URL",
+    "https://github.com/Tanushabsc/Network-Intrusion-Detection-and-Threat-Monitoring-System/releases/download/v1.0/intrusion_model.joblib"
+)
+
+# Download the model if it is not already available
 if not MODEL_PATH.exists():
-    raise FileNotFoundError(
-        f"Model not found at {MODEL_PATH}. Train the model first."
-    )
+    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+    print("Downloading NetGuard AI model...")
+
+    response = requests.get(MODEL_URL, stream=True, timeout=300)
+    response.raise_for_status()
+
+    with open(MODEL_PATH, "wb") as model_file:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                model_file.write(chunk)
+
+    print("Model downloaded successfully!")
+
+# Load trained model
 model = joblib.load(MODEL_PATH)
-
-# Get required features
 FEATURE_COLUMNS = list(model.feature_names_in_)
 
-# Initialize API
 app = FastAPI(
     title="NetGuard AI",
     description="Network Intrusion Detection and Threat Monitoring API",
@@ -53,24 +67,14 @@ def health():
     }
 
 
-@app.get("/model-info")
-def model_info():
-    return {
-        "model": "RandomForestClassifier",
-        "features_required": len(FEATURE_COLUMNS),
-        "feature_names": FEATURE_COLUMNS,
-        "classes": ["Benign", "Attack"]
-    }
-
-
 @app.post("/predict")
 def predict(request: PredictionRequest):
     try:
         received_features = request.features
 
         missing_features = [
-            column for column in FEATURE_COLUMNS
-            if column not in received_features
+            col for col in FEATURE_COLUMNS
+            if col not in received_features
         ]
 
         if missing_features:
@@ -83,17 +87,16 @@ def predict(request: PredictionRequest):
             )
 
         input_data = {
-            column: received_features[column]
-            for column in FEATURE_COLUMNS
+            col: received_features[col]
+            for col in FEATURE_COLUMNS
         }
 
         input_df = pd.DataFrame([input_data])
 
         prediction = int(model.predict(input_df)[0])
-
         probabilities = model.predict_proba(input_df)[0]
-        attack_index = list(model.classes_).index(1)
 
+        attack_index = list(model.classes_).index(1)
         attack_probability = float(probabilities[attack_index])
 
         result = "Attack" if prediction == 1 else "Benign"
@@ -111,7 +114,14 @@ def predict(request: PredictionRequest):
         raise
 
     except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=str(error)
-        )
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+@app.get("/model-info")
+def model_info():
+    return {
+        "model": "RandomForestClassifier",
+        "features_required": len(FEATURE_COLUMNS),
+        "feature_names": FEATURE_COLUMNS,
+        "classes": ["Benign", "Attack"]
+    }

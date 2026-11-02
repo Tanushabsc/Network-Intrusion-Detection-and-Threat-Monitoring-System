@@ -16,10 +16,7 @@ def clean_dataset(input_file, output_file):
 
     # Remove columns that should not be used as model features
     columns_to_drop = ["id", "attack_cat"]
-    df.drop(
-        columns=[col for col in columns_to_drop if col in df.columns],
-        inplace=True
-    )
+    df = df.drop(columns=[col for col in columns_to_drop if col in df.columns])
 
     # Replace infinite values with missing values
     df.replace([np.inf, -np.inf], np.nan, inplace=True)

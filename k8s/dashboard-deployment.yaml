@@ -1,0 +1,24 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netguard-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netguard-dashboard
+  template:
+    metadata:
+      labels:
+        app: netguard-dashboard
+    spec:
+      containers:
+        - name: netguard-dashboard
+          image: netguard-dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8501
+          env:
+            - name: API_URL
+              value: "http://netguard-api:8000"

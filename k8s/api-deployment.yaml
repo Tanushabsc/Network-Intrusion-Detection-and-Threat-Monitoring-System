@@ -1,0 +1,21 @@
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netguard-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netguard-api
+  template:
+    metadata:
+      labels:
+        app: netguard-api
+    spec:
+      containers:
+        - name: netguard-api
+          image: netguard-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000

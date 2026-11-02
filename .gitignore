@@ -1,0 +1,25 @@
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# MLflow
+mlflow.db
+mlruns/
+
+# Datasets managed by DVC
+data/raw/
+data/processed/
+
+# Model artifacts managed separately
+models/*.joblib
+
+# Temporary files
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/

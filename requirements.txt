@@ -1,17 +1,7 @@
 
-pandas
-numpy
-scikit-learn
-dvc
-mlflow
-fastapi
-uvicorn
 streamlit
-joblib
-matplotlib
-seaborn
+pandas
+numpy==2.3.4
+scikit-learn==1.7.2
+joblib==1.5.2
 requests
-pydantic
-pytest
-httpx
-pyyaml

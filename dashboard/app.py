@@ -1,13 +1,19 @@
-import os
-import json
 
-import pandas as pd
+import os
 import requests
+import joblib
+import pandas as pd
 import streamlit as st
 
 # ---------------- CONFIGURATION ----------------
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+MODEL_URL = (
+    "https://github.com/Tanushabsc/"
+    "Network-Intrusion-Detection-and-Threat-Monitoring-System/"
+    "releases/download/v1.0/intrusion_model.joblib"
+)
+
+MODEL_PATH = "models/intrusion_model.joblib"
 DATA_PATH = "data/processed/test.csv"
 
 st.set_page_config(
@@ -16,7 +22,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- CUSTOM DESIGN ----------------
+# ---------------- DESIGN ----------------
 
 st.markdown("""
 <style>
@@ -55,44 +61,102 @@ st.markdown(
 
 st.divider()
 
-# ---------------- API STATUS ----------------
+# ---------------- DOWNLOAD AND LOAD MODEL ----------------
 
-try:
-    health_response = requests.get(
-        f"{API_URL}/health",
-        timeout=5
-    )
-    api_online = health_response.status_code == 200
-except requests.RequestException:
-    api_online = False
+@st.cache_resource
+def load_model():
+
+    os.makedirs("models", exist_ok=True)
+
+    if not os.path.exists(MODEL_PATH):
+
+        response = requests.get(
+            MODEL_URL,
+            stream=True,
+            timeout=300
+        )
+
+        response.raise_for_status()
+
+        with open(MODEL_PATH, "wb") as model_file:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    model_file.write(chunk)
+
+    return joblib.load(MODEL_PATH)
+
+
+with st.spinner("Loading the trained Random Forest model..."):
+    try:
+        model = load_model()
+        model_online = True
+
+    except Exception as error:
+        model_online = False
+        st.error(f"Could not load the model: {error}")
+        st.stop()
+
+# ---------------- MODEL STATUS ----------------
 
 col1, col2 = st.columns([1, 3])
 
 with col1:
-    if api_online:
-        st.success("API ONLINE")
-    else:
-        st.error("API OFFLINE")
+    st.success("MODEL ONLINE")
 
 with col2:
     st.caption("Model: Random Forest | Dataset: UNSW-NB15")
 
-if not api_online:
-    st.warning(
-        "Start the FastAPI server before running predictions."
-    )
-    st.stop()
+st.caption("Predictions are performed directly using the trained machine learning model.")
 
 # ---------------- LOAD DATA ----------------
 
+st.subheader("Dataset")
+
+uploaded_file = st.file_uploader(
+    "Upload UNSW-NB15 test dataset (CSV)",
+    type=["csv"]
+)
+
 @st.cache_data
-def load_data():
+def load_local_data():
     return pd.read_csv(DATA_PATH)
 
-try:
-    data = load_data()
-except Exception as error:
-    st.error(f"Could not load dataset: {error}")
+data = None
+
+if uploaded_file is not None:
+    try:
+        data = pd.read_csv(uploaded_file)
+        st.success("Uploaded dataset loaded successfully.")
+
+    except Exception as error:
+        st.error(f"Could not read uploaded CSV: {error}")
+        st.stop()
+
+elif os.path.exists(DATA_PATH):
+    try:
+        data = load_local_data()
+        st.success("Local test dataset loaded successfully.")
+
+    except Exception as error:
+        st.error(f"Could not load local dataset: {error}")
+        st.stop()
+
+else:
+    st.info(
+        "Upload your UNSW-NB15 testing-set CSV to start network analysis. "
+        "The online dashboard does not automatically access your computer's files."
+    )
+    st.stop()
+
+if "label" not in data.columns:
+    st.error(
+        "The uploaded CSV must contain a 'label' column "
+        "with 0 for Benign and 1 for Attack."
+    )
+    st.stop()
+
+if data.empty:
+    st.error("The uploaded dataset is empty.")
     st.stop()
 
 # ---------------- SIDEBAR ----------------
@@ -107,33 +171,59 @@ st.sidebar.info(
 record_limit = st.sidebar.slider(
     "Number of records to analyse",
     min_value=10,
-    max_value=200,
-    value=50,
+    max_value=min(200, len(data)),
+    value=min(50, len(data)),
     step=10
 )
 
 st.sidebar.caption(
-    "Each record is submitted to the FastAPI prediction endpoint."
+    "Each selected network record is analysed by the trained model."
 )
 
 # ---------------- PREDICTION FUNCTION ----------------
 
 def predict_record(row):
-    features = json.loads(
-        row.drop(labels=["label"]).to_json()
+
+    # Remove target and unnecessary columns
+    features = row.drop(
+        labels=["label", "id", "attack_cat"],
+        errors="ignore"
     )
 
-    response = requests.post(
-        f"{API_URL}/predict",
-        json={"features": features},
-        timeout=30
-    )
+    # Convert to a one-row DataFrame
+    features = pd.DataFrame([features])
 
-    response.raise_for_status()
-    return response.json()
+    prediction_value = int(model.predict(features)[0])
 
+    probabilities = model.predict_proba(features)[0]
+
+    # Find probability belonging to attack class (1)
+    classes = list(model.classes_)
+
+    if 1 in classes:
+        attack_probability = float(probabilities[classes.index(1)])
+    else:
+        attack_probability = 0.0
+
+    prediction = "Attack" if prediction_value == 1 else "Benign"
+
+    # Risk classification based on attack probability
+    if attack_probability >= 0.70:
+        risk_level = "HIGH"
+    elif attack_probability >= 0.40:
+        risk_level = "MEDIUM"
+    else:
+        risk_level = "LOW"
+
+    return {
+        "prediction": prediction,
+        "risk_level": risk_level,
+        "attack_probability": attack_probability
+    }
 
 # ---------------- MONITORING ----------------
+
+st.divider()
 
 st.subheader("Network Threat Monitoring")
 
@@ -144,6 +234,7 @@ st.write(
 if st.button("▶ Start Network Analysis", type="primary"):
 
     results = []
+
     progress = st.progress(0)
     status = st.empty()
 
@@ -172,6 +263,7 @@ if st.button("▶ Start Network Analysis", type="primary"):
             break
 
         progress.progress((index + 1) / record_limit)
+
         status.write(
             f"Analysing network record {index + 1} "
             f"of {record_limit}..."
@@ -207,6 +299,8 @@ if "results" in st.session_state:
             results_df["Risk Level"] == "HIGH"
         ).sum()
 
+        # ---------------- OVERVIEW ----------------
+
         st.divider()
         st.subheader("Security Overview")
 
@@ -226,6 +320,7 @@ if "results" in st.session_state:
 
         with chart_col1:
             st.write("Prediction Distribution")
+
             distribution = results_df[
                 "Prediction"
             ].value_counts()
@@ -234,6 +329,7 @@ if "results" in st.session_state:
 
         with chart_col2:
             st.write("Attack Probability")
+
             st.line_chart(
                 results_df.set_index("Record")[
                     "Attack Probability"
@@ -250,6 +346,7 @@ if "results" in st.session_state:
         ]
 
         if not attack_records.empty:
+
             for _, alert in attack_records.head(10).iterrows():
 
                 st.error(
@@ -258,6 +355,7 @@ if "results" in st.session_state:
                     f"Attack probability: "
                     f"{alert['Attack Probability']:.2%}"
                 )
+
         else:
             st.success("No attacks detected in these records.")
 
@@ -272,7 +370,7 @@ if "results" in st.session_state:
             hide_index=True
         )
 
-        # ---------------- DOWNLOAD ----------------
+        # ---------------- DOWNLOAD REPORT ----------------
 
         csv_data = results_df.to_csv(index=False)
 
@@ -282,6 +380,8 @@ if "results" in st.session_state:
             file_name="netguard_threat_report.csv",
             mime="text/csv"
         )
+
+# ---------------- FOOTER ----------------
 
 st.divider()
 

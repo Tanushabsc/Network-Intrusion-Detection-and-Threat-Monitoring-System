@@ -1,1 +1,1 @@
-Network Intrusion Detection and Threat Monitoring System
+NetGuard - Network Intrusion Detection and Threat Monitoring System
